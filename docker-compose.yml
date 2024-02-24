@@ -1,0 +1,49 @@
+version: '3'
+
+volumes:
+  pg_data:
+  celery_gateway:
+  media:
+  static:
+
+services:
+  db:
+    image: postgres:13
+    env_file: .env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    env_file: .env
+  backend:
+    build: ./backend/
+    command: bash -c "while !</dev/tcp/db/5432; do sleep 1; done; python manage.py migrate && pytest --use-running-containers && python manage.py collectstatic && cp -r /app/collected_static/. /backend_static/static/ && gunicorn backend.wsgi -b 0.0.0.0:8000"
+    env_file: .env
+    depends_on:
+      - db
+    volumes:
+      - celery_gateway:/code
+      - static:/backend_static
+      - media:/app/media/
+  celery:
+    build: ./backend/
+    command: celery -A backend worker --loglevel=info
+    volumes:
+      - celery_gateway:/code
+    depends_on:
+      - db
+      - rabbitmq
+    env_file: .env
+  gateway:
+    build: ./nginx/
+    env_file: .env
+    depends_on:
+      - backend
+    ports:
+      - 8000:80
+    volumes:
+      - static:/staticfiles/
+      - media:/media/
